@@ -7,11 +7,12 @@ class CloudfrontInvalidator
   API_VERSION = '2012-05-05'
   BASE_URL = "https://cloudfront.amazonaws.com/#{API_VERSION}/distribution/"
   DOC_URL = "http://cloudfront.amazonaws.com/doc/#{API_VERSION}/"
-  BACKOFF_LIMIT = 8192
+  BACKOFF_LIMIT = 512
   BACKOFF_DELAY = 0.025
 
-  def initialize(aws_key, aws_secret, cf_dist_id)
+  def initialize(aws_key, aws_secret, cf_dist_id, args = {})
     @aws_key, @aws_secret, @cf_dist_id = aws_key, aws_secret, cf_dist_id
+    @backoff_limit = args[:backoff_limit] || BACKOFF_LIMIT
   end
   
   def invalidate(*keys)
@@ -39,19 +40,22 @@ class CloudfrontInvalidator
     
     # Handle the common case of too many in progress by waiting until the others finish.
     rescue TooManyInvalidationsInProgress => e
-      sleep delay * BACKOFF_DELAY
-      delay *= 2 unless delay >= BACKOFF_LIMIT 
       STDERR.puts e.inspect
-      retry
+      unless delay >= @backoff_limit
+        sleep delay * BACKOFF_DELAY
+        delay *= 2
+        retry
+      else
+        STDERR.puts "Exceeded time limit"
+      end
     end
 
     # If we are passed a block, poll on the status of this invalidation with truncated exponential backoff.
     if block_given?
-      invalidation_id = doc.elements["Invalidation/Id"].text
-      poll_invalidation(invalidation_id) do |status,time|
-        yield status, time
-      end
+      invalidation_id = doc.elements["Invalidation/Id"].text rescue nil
+      poll_invalidation(invalidation_id) {|status,time| yield status, time} if invalidation_id
     end
+    
     return resp
   end
 
@@ -63,8 +67,13 @@ class CloudfrontInvalidator
       status = doc.elements["Invalidation/Status"].text
       yield status, Time.now - start
       break if status != "InProgress"
-      sleep delay * BACKOFF_DELAY
-      delay *= 2 unless delay >= BACKOFF_LIMIT
+      unless delay >= @backoff_limit
+        sleep delay * BACKOFF_DELAY
+        delay *= 2
+      else
+        STDERR.puts "Exceeded time limit"
+        break
+      end
     end
   end
 

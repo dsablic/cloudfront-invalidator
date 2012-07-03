@@ -19,7 +19,7 @@ aws_secret      = ARGV.shift
 distribution_id = ARGV.shift
 paths = ARGV
 
-invalidator = CloudfrontInvalidator.new(aws_key, aws_secret, distribution_id)
+invalidator = CloudfrontInvalidator.new(aws_key, aws_secret, distribution_id, backoff_limit: 8192)
 case verb
 when 'invalidate'
   print "Invalidating #{paths.size} objects"
